@@ -47,6 +47,8 @@ internal sealed class TrayApplicationContext : ApplicationContext
         var exitItem = new ToolStripMenuItem("退出");
         exitItem.Click += (_, _) => ExitApplication();
 
+        var versionItem = new ToolStripMenuItem($"v{Application.ProductVersion}") { Enabled = false };
+
         menu.Items.AddRange(new ToolStripItem[]
         {
             _statusItem,
@@ -57,6 +59,7 @@ internal sealed class TrayApplicationContext : ApplicationContext
             settingsItem,
             new ToolStripSeparator(),
             exitItem,
+            versionItem,
         });
 
         _notifyIcon = new NotifyIcon

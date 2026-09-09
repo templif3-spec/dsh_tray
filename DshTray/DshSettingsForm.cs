@@ -37,7 +37,7 @@ internal sealed class DshSettingsForm : Form
         MaximizeBox = false;
         MinimizeBox = false;
         StartPosition = FormStartPosition.CenterScreen;
-        ClientSize = new Size(420, 306);
+        ClientSize = new Size(420, 330);
         Font = new Font("Microsoft YaHei UI", 9F);
 
         var hostLabel = new Label
@@ -106,6 +106,14 @@ internal sealed class DshSettingsForm : Form
             ForeColor = Color.Gray,
         };
 
+        var versionLabel = new Label
+        {
+            Text = $"v{Application.ProductVersion}",
+            Location = new Point(24, 290),
+            AutoSize = true,
+            ForeColor = Color.Gray,
+        };
+
         var saveButton = new Button
         {
             Text = "保存",
@@ -122,7 +130,7 @@ internal sealed class DshSettingsForm : Form
             DialogResult = DialogResult.Cancel,
         };
 
-        Controls.AddRange(new Control[] { hostLabel, _hostCombo, _warning, portLabel, _portBox, _currentHint, _autoStartBox, autoStartHint, saveButton, cancelButton });
+        Controls.AddRange(new Control[] { hostLabel, _hostCombo, _warning, portLabel, _portBox, _currentHint, _autoStartBox, autoStartHint, versionLabel, saveButton, cancelButton });
         AcceptButton = saveButton;
         CancelButton = cancelButton;
         UpdateWarning();
