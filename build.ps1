@@ -1,6 +1,8 @@
 param(
     # 自包含发布（目标机器无需安装 .NET 运行时，exe 体积较大；离线环境不可用）
     [switch]$SelfContained,
+    # 保留 PDB 调试符号（默认关闭，发布产物不含 .pdb）
+    [switch]$KeepPdb,
     [string]$Runtime = "win-x64",
     [string]$Output = (Join-Path $PSScriptRoot "dist")
 )
@@ -35,10 +37,23 @@ $args = @(
     "-o", $outDir
 )
 
+# Release 产物默认不带 PDB（调试符号关闭；需要调试时用 -KeepPdb）
+if (-not $KeepPdb) {
+    $args += @(
+        "-p:DebugType=None",
+        "-p:DebugSymbols=false"
+    )
+}
+
 & dotnet @args
 if ($LASTEXITCODE -ne 0) {
     Write-Error "发布失败：$outDir"
     exit $LASTEXITCODE
+}
+
+# 清理可能残留的符号文件，确保产物目录只有 exe 等运行文件
+if (-not $KeepPdb) {
+    Get-ChildItem $outDir -Filter *.pdb -File -ErrorAction SilentlyContinue | Remove-Item -Force -ErrorAction SilentlyContinue
 }
 
 Write-Host ""
