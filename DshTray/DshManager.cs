@@ -335,20 +335,42 @@ internal sealed class DshManager
     {
         try
         {
-            using var proc = new Process
+            // 经 cmd 把输出重定向到临时文件：部分受限环境禁止子进程管道捕获
+            // （RedirectStandardOutput 会 EPERM），文件重定向不受影响。
+            var outputFile = Path.Combine(Path.GetTempPath(), $"dsh-tray-netstat-{Environment.ProcessId}.txt");
+            File.Delete(outputFile);
+            using (var proc = new Process
             {
                 StartInfo = new ProcessStartInfo
                 {
-                    FileName = "netstat",
-                    Arguments = "-ano",
+                    FileName = Environment.GetEnvironmentVariable("ComSpec") ?? "cmd.exe",
+                    Arguments = $"/c netstat -ano > \"{outputFile}\"",
                     UseShellExecute = false,
                     CreateNoWindow = true,
-                    RedirectStandardOutput = true,
                 },
-            };
-            proc.Start();
-            var output = proc.StandardOutput.ReadToEnd();
-            proc.WaitForExit(5000);
+            })
+            {
+                proc.Start();
+                if (!proc.WaitForExit(8000))
+                {
+                    try { proc.Kill(); } catch { }
+                }
+            }
+
+            if (!File.Exists(outputFile))
+            {
+                return null;
+            }
+
+            string output;
+            try
+            {
+                output = File.ReadAllText(outputFile);
+            }
+            finally
+            {
+                try { File.Delete(outputFile); } catch { }
+            }
 
             var expected = Config.EffectivePort.ToString();
             foreach (var line in output.Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries))

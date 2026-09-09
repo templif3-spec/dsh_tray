@@ -340,10 +340,21 @@ internal sealed class TrayApplicationContext : ApplicationContext
 
     private void Notify(string title, string message, ToolTipIcon icon)
     {
-        if (_notifyIcon.Visible)
+        if (!_notifyIcon.Visible)
         {
-            _notifyIcon.ShowBalloonTip(4000, title, message, icon);
+            return;
         }
+
+        // 气泡图标取 NotifyIcon.Icon：loading 动画期间弹通知时先切回鲸鱼图标，
+        // 保证通知信息与主图标一致（动画将在 SetBusy(false) 时一并复位）。
+        if (_loadingTimer.Enabled)
+        {
+            _loadingTimer.Stop();
+            _normalIcon ??= IconFactory.Create();
+            _notifyIcon.Icon = _normalIcon;
+            _notifyIcon.Text = "DshTray — dsh 服务托盘管理";
+        }
+        _notifyIcon.ShowBalloonTip(4000, title, message, icon);
     }
 
     private void ExitApplication()

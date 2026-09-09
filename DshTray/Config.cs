@@ -80,12 +80,24 @@ internal sealed class Config
             config = new Config();
         }
 
-        // config 未显式设置监听但覆盖层存在（UI 保存产物、config.json 被移动/删除）时，
-        // 以覆盖层为准反读，保证端口识别与浏览器地址与 dsh 实际监听一致。
-        if (config.Host == null && config.Port == null && SettingsStore.TryReadPatch(out var h, out var p))
+        // dsh-overlay.yml（设置 UI 保存产物）是监听配置的事实来源：
+        // 只要它存在，就以它为准覆盖 config 的 host/port（防止 config 残留旧值
+        // 导致按旧端口检测而误判"未运行"并重复启动实例）。
+        if (SettingsStore.TryReadPatch(out var h, out var p))
         {
-            config.Host = h;
-            config.Port = p;
+            if (config.Host != h || config.Port != p)
+            {
+                config.Host = h;
+                config.Port = p;
+                try
+                {
+                    config.Save(); // 写回，保持文件与覆盖层一致
+                }
+                catch
+                {
+                    // 只读目录等场景下忽略回写失败
+                }
+            }
         }
         return config;
     }
