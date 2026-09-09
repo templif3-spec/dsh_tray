@@ -59,7 +59,7 @@ internal sealed class DshSettingsForm : Form
 
         _warning = new Label
         {
-            Text = "提示：向局域网开放 dsh Web 界面存在安全风险（dsh 会将本机 LAN IP 加入信任列表），\r\n           仅建议在可信网络下使用。",
+            Text = "提示：仅建议在可信网络使用；\r\n开启后将允许局域网设备访问 dsh Web 界面。",
             Location = new Point(24, 76),
             Size = new Size(372, 42),
             ForeColor = Color.FromArgb(176, 90, 0),
@@ -84,7 +84,7 @@ internal sealed class DshSettingsForm : Form
 
         _currentHint = new Label
         {
-            Text = $"当前生效配置：{config.Host ?? "127.0.0.1"} : {config.EffectivePort}",
+            Text = $"当前生效：{config.Host ?? "127.0.0.1"}:{config.EffectivePort}",
             Location = new Point(160, 156),
             AutoSize = true,
             ForeColor = Color.Gray,
@@ -100,9 +100,9 @@ internal sealed class DshSettingsForm : Form
 
         var autoStartHint = new Label
         {
-            Text = "勾选后写入当前用户启动项（HKCU\\...\\CurrentVersion\\Run），无需管理员权限。",
+            Text = "勾选后写入当前用户启动项（注册表 Run 键），\r\n无需管理员权限；登录 Windows 后自动驻留托盘。",
             Location = new Point(40, 216),
-            AutoSize = true,
+            Size = new Size(372, 34),
             ForeColor = Color.Gray,
         };
 
