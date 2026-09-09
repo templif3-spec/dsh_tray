@@ -63,18 +63,31 @@ internal sealed class Config
     public static Config Load()
     {
         var path = Path.Combine(AppContext.BaseDirectory, "config.json");
+        Config config;
         if (File.Exists(path))
         {
             try
             {
-                return JsonSerializer.Deserialize<Config>(File.ReadAllText(path)) ?? new Config();
+                config = JsonSerializer.Deserialize<Config>(File.ReadAllText(path)) ?? new Config();
             }
             catch
             {
-                return new Config();
+                config = new Config();
             }
         }
-        return new Config();
+        else
+        {
+            config = new Config();
+        }
+
+        // config 未显式设置监听但覆盖层存在（UI 保存产物、config.json 被移动/删除）时，
+        // 以覆盖层为准反读，保证端口识别与浏览器地址与 dsh 实际监听一致。
+        if (config.Host == null && config.Port == null && SettingsStore.TryReadPatch(out var h, out var p))
+        {
+            config.Host = h;
+            config.Port = p;
+        }
+        return config;
     }
 
     /// <summary>保存到 exe 同目录 config.json（null 字段不写出，保持文件干净）。</summary>
