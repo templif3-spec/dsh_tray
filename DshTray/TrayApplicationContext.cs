@@ -358,7 +358,11 @@ internal sealed class TrayApplicationContext : ApplicationContext
 
     // ---------- loading 图标动画 ----------
 
-    private void SetLoading(bool loading)
+    /// <summary>
+    /// 切换 loading 动画。busyText 为当前操作描述（如"正在检查 dsh 更新…"），
+    /// 会作为图标悬停提示显示；为空时用通用文案。
+    /// </summary>
+    private void SetLoading(bool loading, string? busyText = null)
     {
         if (loading)
         {
@@ -375,7 +379,11 @@ internal sealed class TrayApplicationContext : ApplicationContext
             }
             _loadingFrame = 0;
             _notifyIcon.Icon = _loadingFrames[0];
-            _notifyIcon.Text = NotifyTextBusy;
+            // NotifyIcon.Text 上限 63 字符，超出会抛异常，统一截断保护
+            var text = string.IsNullOrWhiteSpace(busyText)
+                ? NotifyTextBusy
+                : $"DshTray — {busyText.TrimEnd('…')}";
+            _notifyIcon.Text = text.Length <= 63 ? text : text[..63];
             _loadingTimer.Start();
         }
         else
@@ -673,7 +681,7 @@ internal sealed class TrayApplicationContext : ApplicationContext
             {
                 _statusItem.Text = statusText;
             }
-            SetLoading(true);
+            SetLoading(true, statusText);
             if (!_menuOpen)
             {
                 _notifyIcon.ContextMenuStrip!.Items.Cast<ToolStripItem>()
