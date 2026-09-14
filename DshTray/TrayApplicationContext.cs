@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Runtime.InteropServices;
 using System.Windows.Forms;
 
 namespace DshTray;
@@ -9,6 +10,10 @@ namespace DshTray;
 /// </summary>
 internal sealed class TrayApplicationContext : ApplicationContext
 {
+    /// <summary>强制释放当前线程的鼠标捕获：防止菜单异常退出后残留"幽灵捕获"导致系统点击失效。</summary>
+    [DllImport("user32.dll")]
+    private static extern bool ReleaseCapture();
+
     private readonly Config _config;
     private readonly DshManager _manager;
     private readonly UpdateChecker _updateChecker;
@@ -23,6 +28,8 @@ internal sealed class TrayApplicationContext : ApplicationContext
     private const string NotifyTextBusy = "DshTray — 正在重启/启动 dsh…";
     private const int NotifyIconRecreateIntervalTicks = 1440;
     private int _refreshTicks;
+    /// <summary>右键菜单是否处于打开状态（打开期间禁止改菜单项文本）。</summary>
+    private bool _menuOpen;
 
     // loading 图标动画状态
     private static readonly int LoadingFrameCount = 8;
@@ -43,25 +50,42 @@ internal sealed class TrayApplicationContext : ApplicationContext
 
         var menu = new ContextMenuStrip();
 
+        // 菜单打开期间禁止修改菜单项文本（避免 ToolStrip 内部状态错乱导致捕获残留）；
+        // 关闭时统一刷新状态并强制释放鼠标捕获（幽灵捕获兜底）。
+        menu.Opening += (_, _) => _menuOpen = true;
+        menu.Closed += (_, _) =>
+        {
+            _menuOpen = false;
+            try
+            {
+                ReleaseCapture();
+            }
+            catch
+            {
+                // 忽略：捕获已释放或非本线程
+            }
+            RefreshStatus();
+        };
+
         _statusItem = new ToolStripMenuItem("dsh：检测中…") { Enabled = false };
 
         var openItem = new ToolStripMenuItem("在浏览器中打开界面");
-        openItem.Click += (_, _) => OpenBrowser();
+        openItem.Click += (_, _) => RunAfterMenuCloses(OpenBrowser);
 
         var restartItem = new ToolStripMenuItem("重启 dsh");
-        restartItem.Click += async (_, _) => await RestartDshAsync();
+        restartItem.Click += (_, _) => RunAfterMenuCloses(() => _ = RestartDshAsync());
 
         _toggleItem = new ToolStripMenuItem("关闭 dsh");
-        _toggleItem.Click += async (_, _) => await ToggleDshAsync();
+        _toggleItem.Click += (_, _) => RunAfterMenuCloses(() => _ = ToggleDshAsync());
 
         var settingsItem = new ToolStripMenuItem("dsh 设置…");
-        settingsItem.Click += (_, _) => OpenSettings();
+        settingsItem.Click += (_, _) => RunAfterMenuCloses(OpenSettings);
 
         var updateItem = new ToolStripMenuItem("检查 dsh 更新…");
-        updateItem.Click += async (_, _) => await CheckUpdatesAsync(silent: false);
+        updateItem.Click += (_, _) => RunAfterMenuCloses(() => _ = CheckUpdatesAsync(silent: false));
 
         var exitItem = new ToolStripMenuItem("退出");
-        exitItem.Click += (_, _) => ExitApplication();
+        exitItem.Click += (_, _) => RunAfterMenuCloses(ExitApplication);
 
         var versionItem = new ToolStripMenuItem($"v{Application.ProductVersion}") { Enabled = false };
 
@@ -111,9 +135,36 @@ internal sealed class TrayApplicationContext : ApplicationContext
         }
     }
 
-    /// <summary>创建托盘图标（初始与长期运行重建共用）。</summary>
-    private NotifyIcon BuildNotifyIcon(ContextMenuStrip menu)
+    /// <summary>
+    /// 把菜单项动作投递到消息队列末尾执行：菜单项 Click 与菜单关闭是同一段消息处理，
+    /// 在其中执行重活或修改菜单文本可能让 ToolStrip 状态错乱、残留鼠标捕获，
+    /// 导致系统范围点击失效（键盘仍可用）。延迟到菜单完全关闭后再执行。
+    /// </summary>
+    private void RunAfterMenuCloses(Action action)
     {
+        var ctx = SynchronizationContext.Current;
+        if (ctx != null)
+        {
+            ctx.Post(_ =>
+            {
+                try
+                {
+                    action();
+                }
+                catch (Exception ex)
+                {
+                    Log.Error("MenuAction", ex);
+                }
+            }, null);
+        }
+        else
+        {
+            action();
+        }
+    }
+
+    /// <summary>创建托盘图标（初始与长期运行重建共用）。</summary>
+    private NotifyIcon BuildNotifyIcon(ContextMenuStrip menu)    {
         var icon = new NotifyIcon
         {
             Text = NotifyTextNormal,
@@ -134,7 +185,7 @@ internal sealed class TrayApplicationContext : ApplicationContext
     {
         RefreshStatus();
 
-        if (!_busy && !_loadingTimer.Enabled)
+        if (!_busy && !_loadingTimer.Enabled && !_menuOpen)
         {
             _refreshTicks++;
             if (_refreshTicks >= NotifyIconRecreateIntervalTicks)
@@ -618,24 +669,30 @@ internal sealed class TrayApplicationContext : ApplicationContext
         _busy = busy;
         if (busy)
         {
-            if (statusText != null)
+            if (statusText != null && !_menuOpen)
             {
                 _statusItem.Text = statusText;
             }
             SetLoading(true);
-            _notifyIcon.ContextMenuStrip!.Items.Cast<ToolStripItem>()
-                .Where(i => i.Enabled && i != _statusItem)
-                .ToList()
-                .ForEach(i => i.Enabled = false);
+            if (!_menuOpen)
+            {
+                _notifyIcon.ContextMenuStrip!.Items.Cast<ToolStripItem>()
+                    .Where(i => i.Enabled && i != _statusItem)
+                    .ToList()
+                    .ForEach(i => i.Enabled = false);
+            }
         }
         else
         {
             SetLoading(false);
             RefreshStatus();
-            _notifyIcon.ContextMenuStrip!.Items.Cast<ToolStripItem>()
-                .Where(i => i.Enabled == false && i != _statusItem)
-                .ToList()
-                .ForEach(i => i.Enabled = true);
+            if (!_menuOpen)
+            {
+                _notifyIcon.ContextMenuStrip!.Items.Cast<ToolStripItem>()
+                    .Where(i => i.Enabled == false && i != _statusItem)
+                    .ToList()
+                    .ForEach(i => i.Enabled = true);
+            }
         }
     }
 
@@ -644,12 +701,16 @@ internal sealed class TrayApplicationContext : ApplicationContext
         try
         {
             var pid = await _manager.FindDshPidAsync();
-            _statusItem.Text = pid != null
-                ? $"dsh：运行中（PID {pid}）"
-                : "dsh：未运行（右键可启动）";
-            _statusItem.ToolTipText = $"界面地址：{_config.BrowserUrl}";
-            // 运行中 → 关闭 dsh；未运行 → 启动 dsh
-            _toggleItem.Text = pid != null ? "关闭 dsh" : "启动 dsh";
+            // 菜单打开期间不改动菜单项（ToolStrip 显示中修改文本可能导致状态错乱/捕获残留）
+            if (!_menuOpen)
+            {
+                _statusItem.Text = pid != null
+                    ? $"dsh：运行中（PID {pid}）"
+                    : "dsh：未运行（右键可启动）";
+                _statusItem.ToolTipText = $"界面地址：{_config.BrowserUrl}";
+                // 运行中 → 关闭 dsh；未运行 → 启动 dsh
+                _toggleItem.Text = pid != null ? "关闭 dsh" : "启动 dsh";
+            }
         }
         catch (Exception ex)
         {
