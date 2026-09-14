@@ -158,7 +158,8 @@ internal sealed class DshManager
         return "web";
     }
 
-    private string ResolveNodeExe()
+    /// <summary>解析 node.exe 路径（供启动与更新检查复用）。</summary>
+    public string ResolveNodeExe()
     {
         if (!string.IsNullOrWhiteSpace(Config.NodeExe) && File.Exists(Config.NodeExe))
         {
@@ -185,7 +186,8 @@ internal sealed class DshManager
         throw new FileNotFoundException("未找到 node.exe：请在 config.json 中设置 \"node\" 路径。");
     }
 
-    private string ResolveDshEntry()
+    /// <summary>解析 dsh 入口 bin.js 路径（供启动、更新检查与版本读取复用）。</summary>
+    public string ResolveDshEntry()
     {
         if (!string.IsNullOrWhiteSpace(Config.DshEntry) && File.Exists(Config.DshEntry))
         {

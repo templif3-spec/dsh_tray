@@ -11,6 +11,7 @@ internal sealed class TrayApplicationContext : ApplicationContext
 {
     private readonly Config _config;
     private readonly DshManager _manager;
+    private readonly UpdateChecker _updateChecker;
     private readonly NotifyIcon _notifyIcon;
     private readonly ToolStripMenuItem _statusItem;
     private readonly System.Windows.Forms.Timer _refreshTimer;
@@ -27,6 +28,7 @@ internal sealed class TrayApplicationContext : ApplicationContext
     {
         _config = Config.Load();
         _manager = new DshManager(_config);
+        _updateChecker = new UpdateChecker(_manager);
 
         var menu = new ContextMenuStrip();
 
@@ -44,6 +46,9 @@ internal sealed class TrayApplicationContext : ApplicationContext
         var settingsItem = new ToolStripMenuItem("dsh 设置…");
         settingsItem.Click += (_, _) => OpenSettings();
 
+        var updateItem = new ToolStripMenuItem("检查 dsh 更新…");
+        updateItem.Click += async (_, _) => await CheckUpdatesAsync(silent: false);
+
         var exitItem = new ToolStripMenuItem("退出");
         exitItem.Click += (_, _) => ExitApplication();
 
@@ -57,6 +62,7 @@ internal sealed class TrayApplicationContext : ApplicationContext
             restartItem,
             stopItem,
             settingsItem,
+            updateItem,
             new ToolStripSeparator(),
             exitItem,
             versionItem,
@@ -89,6 +95,156 @@ internal sealed class TrayApplicationContext : ApplicationContext
         }
 
         _ = BootstrapAsync();
+
+        // 开启自动更新时：启动后延迟静默检查（有新版则自动更新）
+        if (_config.AutoUpdate == true)
+        {
+            _ = AutoUpdateCheckAsync();
+        }
+    }
+
+    // ---------- dsh 更新检查 ----------
+
+    /// <summary>启动后的静默自动检查（延迟避开启动高峰）。</summary>
+    private async Task AutoUpdateCheckAsync()
+    {
+        try
+        {
+            await Task.Delay(TimeSpan.FromSeconds(15));
+            Log.Info("自动更新检查开始（autoUpdate=true）。");
+            await CheckUpdatesAsync(silent: true);
+        }
+        catch (Exception ex)
+        {
+            Log.Error("AutoUpdateCheck", ex);
+        }
+    }
+
+    /// <summary>
+    /// 检查 dsh 更新：比对本地版本与 npm registry 最新版本。
+    /// silent=true（自动模式）时发现新版直接更新；false（手动）时先询问。
+    /// </summary>
+    private async Task CheckUpdatesAsync(bool silent)
+    {
+        if (_busy)
+        {
+            return;
+        }
+
+        if (!silent)
+        {
+            SetBusy(true, "正在检查 dsh 更新…");
+        }
+
+        try
+        {
+            var installed = _updateChecker.GetInstalledVersion();
+            var latest = await UpdateChecker.GetLatestVersionAsync();
+
+            if (latest == null)
+            {
+                if (!silent)
+                {
+                    Notify("检查更新失败", "无法访问 npm registry（网络不可用？）。", ToolTipIcon.Warning);
+                }
+                return;
+            }
+
+            if (installed == null)
+            {
+                if (!silent)
+                {
+                    Notify("检查更新", $"npm 上最新版本：{latest}（未能读取本地版本）。", ToolTipIcon.Info);
+                }
+                return;
+            }
+
+            if (!UpdateChecker.IsNewer(latest, installed))
+            {
+                Log.Info($"dsh 已是最新：{installed}");
+                if (!silent)
+                {
+                    Notify("dsh 已是最新", $"当前版本 {installed}。", ToolTipIcon.Info);
+                }
+                return;
+            }
+
+            Log.Info($"发现 dsh 新版本：{latest}（当前 {installed}）");
+            if (silent)
+            {
+                await RunUpdateAsync(latest, installed);
+                return;
+            }
+
+            if (!silent)
+            {
+                SetBusy(false, null); // 先恢复以便弹出询问框
+            }
+            var answer = MessageBox.Show(
+                $"发现新版本 dsh {latest}（当前 {installed}）。\n\n是否立即更新？（更新后需重启 dsh 生效）",
+                "dsh 更新",
+                MessageBoxButtons.YesNo,
+                MessageBoxIcon.Question);
+            if (answer == DialogResult.Yes)
+            {
+                await RunUpdateAsync(latest, installed);
+            }
+        }
+        catch (Exception ex)
+        {
+            Log.Error("CheckUpdates", ex);
+            if (!silent)
+            {
+                Notify("检查更新失败", ex.Message, ToolTipIcon.Error);
+            }
+        }
+        finally
+        {
+            if (!silent)
+            {
+                SetBusy(false, null);
+            }
+            RefreshStatus();
+        }
+    }
+
+    /// <summary>执行更新并在成功后询问是否重启 dsh。</summary>
+    private async Task RunUpdateAsync(string latest, string installed)
+    {
+        try
+        {
+            SetBusy(true, $"正在更新 dsh 到 {latest}…");
+            var ok = await _updateChecker.RunUpdateAsync();
+            if (!ok)
+            {
+                Notify("dsh 更新失败",
+                    "npx 更新未成功，请检查网络或手动执行：npx @deepseek-ai/dsh@latest",
+                    ToolTipIcon.Warning);
+                return;
+            }
+
+            Log.Info($"dsh 更新完成：{installed} → {latest}");
+            Notify("dsh 更新完成", $"已更新到 {latest}（原 {installed}），重启 dsh 后生效。", ToolTipIcon.Info);
+
+            var answer = MessageBox.Show(
+                $"dsh 已更新到 {latest}。\n\n是否立即重启 dsh 使其生效？",
+                "dsh 更新",
+                MessageBoxButtons.YesNo,
+                MessageBoxIcon.Question);
+            if (answer == DialogResult.Yes)
+            {
+                await RestartDshAsync();
+            }
+        }
+        catch (Exception ex)
+        {
+            Log.Error("RunUpdate", ex);
+            Notify("dsh 更新失败", ex.Message, ToolTipIcon.Error);
+        }
+        finally
+        {
+            SetBusy(false, null);
+        }
     }
 
     // ---------- loading 图标动画 ----------
@@ -266,18 +422,26 @@ internal sealed class TrayApplicationContext : ApplicationContext
     private void OpenSettings()
     {
         var form = new DshSettingsForm(_config);
-        if (form.ShowDialog() != DialogResult.OK || (!form.Changed && !form.AutoStartChanged))
+        if (form.ShowDialog() != DialogResult.OK
+            || (!form.Changed && !form.AutoStartChanged && !form.AutoUpdateChanged))
         {
             return;
         }
 
-        Log.Info($"监听设置已保存：host={form.SavedHost} port={form.SavedPort} autoStart={_config.AutoStart}");
+        Log.Info($"设置已保存：host={form.SavedHost} port={form.SavedPort} autoStart={_config.AutoStart} autoUpdate={_config.AutoUpdate}");
 
         if (form.AutoStartChanged)
         {
             Notify("开机自启", _config.AutoStart == true
                 ? "已启用：登录 Windows 后自动驻留托盘。"
                 : "已关闭：下次登录不再自动启动。", ToolTipIcon.Info);
+        }
+
+        if (form.AutoUpdateChanged)
+        {
+            Notify("dsh 自动更新", _config.AutoUpdate == true
+                ? "已启用：启动时自动检查并更新 DeepSeek Harness。"
+                : "已关闭：不再自动检查更新（仍可手动检查）。", ToolTipIcon.Info);
         }
 
         if (!form.Changed)

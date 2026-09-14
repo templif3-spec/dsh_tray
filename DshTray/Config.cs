@@ -14,6 +14,7 @@ namespace DshTray;
 ///   dshEntry dsh 入口 bin.js 路径（默认从 PATH 的 dsh.cmd 或 npx 缓存探测）
 ///   dshArgs  启动参数（默认 "web"；显式设置 Host/Port 时改用 --patch 覆盖层）
 ///   autoStart 是否写入开机启动项（true=注册；false=注销；未设置不干预）
+///   autoUpdate 是否在启动时自动检查并更新 dsh（true=自动检查+更新；未设置=false）
 /// </summary>
 internal sealed class Config
 {
@@ -24,6 +25,7 @@ internal sealed class Config
     public string? DshEntry { get; set; }
     public string DshArgs { get; set; } = "web";
     public bool? AutoStart { get; set; }
+    public bool? AutoUpdate { get; set; }
 
     /// <summary>生效端口：Port 字段优先，回退 url 中的端口。</summary>
     public int EffectivePort

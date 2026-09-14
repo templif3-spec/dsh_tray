@@ -17,6 +17,7 @@ internal sealed class DshSettingsForm : Form
     private readonly ComboBox _hostCombo;
     private readonly NumericUpDown _portBox;
     private readonly CheckBox _autoStartBox;
+    private readonly CheckBox _autoUpdateBox;
     private readonly Label _warning;
     private readonly Label _currentHint;
 
@@ -27,6 +28,8 @@ internal sealed class DshSettingsForm : Form
     public bool Changed { get; private set; }
     /// <summary>开机自启是否发生变化（立即生效，无需重启 dsh）。</summary>
     public bool AutoStartChanged { get; private set; }
+    /// <summary>自动更新是否发生变化。</summary>
+    public bool AutoUpdateChanged { get; private set; }
 
     public DshSettingsForm(Config config)
     {
@@ -37,7 +40,7 @@ internal sealed class DshSettingsForm : Form
         MaximizeBox = false;
         MinimizeBox = false;
         StartPosition = FormStartPosition.CenterScreen;
-        ClientSize = new Size(420, 330);
+        ClientSize = new Size(420, 390);
         Font = new Font("Microsoft YaHei UI", 9F);
 
         var hostLabel = new Label
@@ -100,8 +103,24 @@ internal sealed class DshSettingsForm : Form
 
         var autoStartHint = new Label
         {
-            Text = "勾选后写入当前用户启动项（注册表 Run 键），\r\n无需管理员权限；登录 Windows 后自动驻留托盘。",
-            Location = new Point(40, 216),
+            Text = "勾选后写入当前用户启动项（注册表 Run 键），无需管理员权限。",
+            Location = new Point(40, 214),
+            Size = new Size(372, 18),
+            ForeColor = Color.Gray,
+        };
+
+        _autoUpdateBox = new CheckBox
+        {
+            Text = "启动时自动检查并更新 DeepSeek Harness",
+            Location = new Point(24, 244),
+            AutoSize = true,
+            Checked = config.AutoUpdate == true,
+        };
+
+        var autoUpdateHint = new Label
+        {
+            Text = "开启后启动时检查 npm 最新版本，发现新版自动更新（重启 dsh 生效）；\r\n也可随时用右键菜单「检查 dsh 更新…」手动检查。",
+            Location = new Point(40, 266),
             Size = new Size(372, 34),
             ForeColor = Color.Gray,
         };
@@ -109,7 +128,7 @@ internal sealed class DshSettingsForm : Form
         var versionLabel = new Label
         {
             Text = $"v{Application.ProductVersion}",
-            Location = new Point(24, 290),
+            Location = new Point(24, 350),
             AutoSize = true,
             ForeColor = Color.Gray,
         };
@@ -117,7 +136,7 @@ internal sealed class DshSettingsForm : Form
         var saveButton = new Button
         {
             Text = "保存",
-            Location = new Point(24, 252),
+            Location = new Point(24, 308),
             Size = new Size(120, 32),
         };
         saveButton.Click += (_, _) => SaveAndClose();
@@ -125,12 +144,12 @@ internal sealed class DshSettingsForm : Form
         var cancelButton = new Button
         {
             Text = "取消",
-            Location = new Point(160, 252),
+            Location = new Point(160, 308),
             Size = new Size(90, 32),
             DialogResult = DialogResult.Cancel,
         };
 
-        Controls.AddRange(new Control[] { hostLabel, _hostCombo, _warning, portLabel, _portBox, _currentHint, _autoStartBox, autoStartHint, versionLabel, saveButton, cancelButton });
+        Controls.AddRange(new Control[] { hostLabel, _hostCombo, _warning, portLabel, _portBox, _currentHint, _autoStartBox, autoStartHint, _autoUpdateBox, autoUpdateHint, versionLabel, saveButton, cancelButton });
         AcceptButton = saveButton;
         CancelButton = cancelButton;
         UpdateWarning();
@@ -146,14 +165,17 @@ internal sealed class DshSettingsForm : Form
         var origHost = _config.Host ?? "127.0.0.1";
         var origPort = _config.EffectivePort;
         var origAutoStart = _config.AutoStart ?? StartupManager.IsRegistered();
+        var origAutoUpdate = _config.AutoUpdate == true;
 
         var host = HostConfigValues[_hostCombo.SelectedIndex];
         var port = decimal.ToInt32(_portBox.Value);
         var autoStart = _autoStartBox.Checked;
+        var autoUpdate = _autoUpdateBox.Checked;
 
         _config.Host = host;
         _config.Port = port;
         _config.AutoStart = autoStart;
+        _config.AutoUpdate = autoUpdate;
         try
         {
             _config.Save();
@@ -180,6 +202,7 @@ internal sealed class DshSettingsForm : Form
         SavedPort = port;
         Changed = host != origHost || port != origPort;
         AutoStartChanged = autoStart != origAutoStart;
+        AutoUpdateChanged = autoUpdate != origAutoUpdate;
         DialogResult = DialogResult.OK;
         Close();
     }
