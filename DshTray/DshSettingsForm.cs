@@ -36,6 +36,8 @@ internal sealed class DshSettingsForm : Form
         _config = config;
         Text = "dsh 设置";
         Icon = IconFactory.Create();
+        // Form.Icon 不随窗体自动释放，显式释放避免长期运行累积 GDI 句柄
+        FormClosed += (_, _) => Icon?.Dispose();
         FormBorderStyle = FormBorderStyle.FixedDialog;
         MaximizeBox = false;
         MinimizeBox = false;

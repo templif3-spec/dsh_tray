@@ -12,11 +12,17 @@ internal sealed class TrayApplicationContext : ApplicationContext
     private readonly Config _config;
     private readonly DshManager _manager;
     private readonly UpdateChecker _updateChecker;
-    private readonly NotifyIcon _notifyIcon;
+    private NotifyIcon _notifyIcon;
     private readonly ToolStripMenuItem _statusItem;
     /// <summary>运行中显示「关闭 dsh」、未运行显示「启动 dsh」（点击时按实时状态分派）。</summary>
     private readonly ToolStripMenuItem _toggleItem;
     private readonly System.Windows.Forms.Timer _refreshTimer;
+
+    // 长时间运行加固：定期重建通知图标（15s × 1440 = 6 小时）
+    private const string NotifyTextNormal = "DshTray — dsh 服务托盘管理";
+    private const string NotifyTextBusy = "DshTray — 正在重启/启动 dsh…";
+    private const int NotifyIconRecreateIntervalTicks = 1440;
+    private int _refreshTicks;
 
     // loading 图标动画状态
     private static readonly int LoadingFrameCount = 8;
@@ -73,31 +79,28 @@ internal sealed class TrayApplicationContext : ApplicationContext
             versionItem,
         });
 
-        _notifyIcon = new NotifyIcon
-        {
-            Text = "DshTray — dsh 服务托盘管理",
-            Icon = _normalIcon = IconFactory.Create(),
-            ContextMenuStrip = menu,
-            Visible = true,
-        };
-        _notifyIcon.DoubleClick += (_, _) => OpenBrowser();
+        _notifyIcon = BuildNotifyIcon(menu);
 
         _refreshTimer = new System.Windows.Forms.Timer { Interval = 15_000 };
-        _refreshTimer.Tick += (_, _) => RefreshStatus();
+        _refreshTimer.Tick += (_, _) => OnRefreshTick();
         _refreshTimer.Start();
 
-        _loadingTimer = new System.Windows.Forms.Timer { Interval = 120 };
+        // loading 动画帧间隔 200ms：兼顾观感与 Shell 通知调用压力（长时间运行稳定性）
+        _loadingTimer = new System.Windows.Forms.Timer { Interval = 200 };
         _loadingTimer.Tick += (_, _) => AdvanceLoadingFrame();
 
-        // 启动时同步 config.json 的开机自启设置（支持手改配置生效、修复注册表被外部改动）
-        try
+        // 启动时同步 config.json 的开机自启设置（后台执行：注册表访问可能被安全软件拖慢）
+        _ = Task.Run(() =>
         {
-            StartupManager.Apply(_config);
-        }
-        catch (Exception ex)
-        {
-            Log.Error("StartupManager.Apply", ex);
-        }
+            try
+            {
+                StartupManager.Apply(_config);
+            }
+            catch (Exception ex)
+            {
+                Log.Error("StartupManager.Apply", ex);
+            }
+        });
 
         _ = BootstrapAsync();
 
@@ -105,6 +108,56 @@ internal sealed class TrayApplicationContext : ApplicationContext
         if (_config.AutoUpdate == true)
         {
             _ = AutoUpdateCheckAsync();
+        }
+    }
+
+    /// <summary>创建托盘图标（初始与长期运行重建共用）。</summary>
+    private NotifyIcon BuildNotifyIcon(ContextMenuStrip menu)
+    {
+        var icon = new NotifyIcon
+        {
+            Text = NotifyTextNormal,
+            Icon = _normalIcon ??= IconFactory.Create(),
+            ContextMenuStrip = menu,
+            Visible = true,
+        };
+        icon.DoubleClick += (_, _) => OpenBrowser();
+        return icon;
+    }
+
+    /// <summary>
+    /// 刷新计时（15s）：状态刷新 + 每 6 小时重建一次托盘图标。
+    /// 长时间运行时 Shell 通知区可能与我们失联（图标丢失/交互异常），
+    /// 定期重建是最简单可靠的加固手段。
+    /// </summary>
+    private void OnRefreshTick()
+    {
+        RefreshStatus();
+
+        if (!_busy && !_loadingTimer.Enabled)
+        {
+            _refreshTicks++;
+            if (_refreshTicks >= NotifyIconRecreateIntervalTicks)
+            {
+                _refreshTicks = 0;
+                RecreateNotifyIcon();
+            }
+        }
+    }
+
+    private void RecreateNotifyIcon()
+    {
+        try
+        {
+            var old = _notifyIcon;
+            _notifyIcon = BuildNotifyIcon(old.ContextMenuStrip!);
+            old.Visible = false;
+            old.Dispose();
+            Log.Info("已重建托盘通知图标（定期加固）。");
+        }
+        catch (Exception ex)
+        {
+            Log.Error("RecreateNotifyIcon", ex);
         }
     }
 
@@ -271,7 +324,7 @@ internal sealed class TrayApplicationContext : ApplicationContext
             }
             _loadingFrame = 0;
             _notifyIcon.Icon = _loadingFrames[0];
-            _notifyIcon.Text = "DshTray — 正在重启/启动 dsh…";
+            _notifyIcon.Text = NotifyTextBusy;
             _loadingTimer.Start();
         }
         else
@@ -279,7 +332,7 @@ internal sealed class TrayApplicationContext : ApplicationContext
             _loadingTimer.Stop();
             _normalIcon ??= IconFactory.Create();
             _notifyIcon.Icon = _normalIcon;
-            _notifyIcon.Text = "DshTray — dsh 服务托盘管理";
+            _notifyIcon.Text = NotifyTextNormal;
         }
     }
 
@@ -618,7 +671,7 @@ internal sealed class TrayApplicationContext : ApplicationContext
             _loadingTimer.Stop();
             _normalIcon ??= IconFactory.Create();
             _notifyIcon.Icon = _normalIcon;
-            _notifyIcon.Text = "DshTray — dsh 服务托盘管理";
+            _notifyIcon.Text = NotifyTextNormal;
         }
         _notifyIcon.ShowBalloonTip(4000, title, message, icon);
     }

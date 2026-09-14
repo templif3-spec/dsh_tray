@@ -1,29 +1,60 @@
+using System.Collections.Concurrent;
+
 namespace DshTray;
 
-/// <summary>简单文件日志（与 exe 同目录 dsh-tray.log），便于排查。</summary>
+/// <summary>
+/// 文件日志（与 exe 同目录 dsh-tray.log）。
+/// **异步写入**：调用方（含 UI 线程）只入队，写盘由独立后台线程完成 ——
+/// 避免安全软件扫描文件时阻塞 UI 线程（托盘 UI 阻塞会导致 Shell
+/// 与托盘窗口交互超时，进而使任务栏/鼠标点击异常）。
+/// </summary>
 internal static class Log
 {
-    private static readonly object Sync = new();
+    private static readonly BlockingCollection<string> Queue = new(new ConcurrentQueue<string>());
+    private static readonly string FilePath = Path.Combine(AppContext.BaseDirectory, "dsh-tray.log");
 
-    private static string FilePath => Path.Combine(AppContext.BaseDirectory, "dsh-tray.log");
+    static Log()
+    {
+        var writer = new Thread(WriteLoop)
+        {
+            IsBackground = true,
+            Name = "DshTray.LogWriter",
+        };
+        writer.Start();
+    }
 
-    public static void Info(string message) => Write("INFO", message);
+    public static void Info(string message) => Enqueue("INFO", message);
 
     public static void Error(string context, Exception ex) =>
-        Write("ERROR", $"{context}: {ex.GetType().Name}: {ex.Message}");
+        Enqueue("ERROR", $"{context}: {ex.GetType().Name}: {ex.Message}");
 
-    private static void Write(string level, string message)
+    private static void Enqueue(string level, string message)
     {
         try
         {
-            lock (Sync)
+            if (!Queue.IsAddingCompleted)
             {
-                File.AppendAllText(FilePath, $"[{DateTime.Now:yyyy-MM-dd HH:mm:ss}] [{level}] {message}{Environment.NewLine}");
+                Queue.Add($"[{DateTime.Now:yyyy-MM-dd HH:mm:ss}] [{level}] {message}");
             }
         }
         catch
         {
-            // 日志失败不影响主流程
+            // 队列关闭（进程退出中）时忽略：日志失败不影响主流程
+        }
+    }
+
+    private static void WriteLoop()
+    {
+        foreach (var line in Queue.GetConsumingEnumerable())
+        {
+            try
+            {
+                File.AppendAllText(FilePath, line + Environment.NewLine);
+            }
+            catch
+            {
+                // 写盘失败不影响主流程
+            }
         }
     }
 }
