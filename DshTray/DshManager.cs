@@ -160,6 +160,12 @@ internal sealed class DshManager
         // 让 Node（24+）的 fetch/undici 遵循 HTTP_PROXY / HTTPS_PROXY / NO_PROXY 环境变量。
         // 代理地址本身可写在 config.json 的 env 中（如 HTTPS_PROXY），或由系统环境变量继承。
         psi.Environment["NODE_USE_ENV_PROXY"] = "1";
+
+        // 让 Node 使用 Windows 系统证书库（含杀软如 Kaspersky 的 HTTPS 扫描根证书）。
+        // 否则 Node 内置 CA 不信任中间人证书，会随机报 SELF_SIGNED_CERT_IN_CHAIN，
+        // 表现为"DeepSeek API request failed / 一直重试"。
+        psi.Environment["NODE_USE_SYSTEM_CA"] = "1";
+
         if (Config.Env != null)
         {
             foreach (var pair in Config.Env)
@@ -174,7 +180,7 @@ internal sealed class DshManager
         var proxyNote = new[] { "HTTPS_PROXY", "HTTP_PROXY", "ALL_PROXY" }
             .Select(k => Environment.GetEnvironmentVariable(k))
             .FirstOrDefault(v => !string.IsNullOrWhiteSpace(v));
-        Log.Info($"启动环境：NODE_USE_ENV_PROXY=1，代理={(proxyNote ?? "（未设置，直连）")}");
+        Log.Info($"启动环境：NODE_USE_ENV_PROXY=1，NODE_USE_SYSTEM_CA=1，代理={(proxyNote ?? "（未设置，直连）")}");
 
         return psi;
     }
