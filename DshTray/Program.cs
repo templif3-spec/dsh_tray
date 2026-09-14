@@ -21,8 +21,12 @@ internal static class Program
             return;
         }
 
+        // 开机自启场景（注册表 Run 传入 --autostart）：延迟启动 dsh，避开登录高峰
+        var autoStarted = Environment.GetCommandLineArgs()
+            .Any(a => a.Equals("--autostart", StringComparison.OrdinalIgnoreCase));
+
         SetCurrentProcessExplicitAppUserModelID("DeepSeek.DshTray.Tray");
         ApplicationConfiguration.Initialize();
-        Application.Run(new TrayApplicationContext());
+        Application.Run(new TrayApplicationContext(autoStarted));
     }
 }

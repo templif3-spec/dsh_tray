@@ -23,9 +23,12 @@ internal sealed class TrayApplicationContext : ApplicationContext
     private Icon[]? _loadingFrames;
     private int _loadingFrame;
     private bool _busy;
+    /// <summary>是否由开机自启拉起（此场景延迟启动 dsh，避开登录高峰）。</summary>
+    private readonly bool _autoStarted;
 
-    public TrayApplicationContext()
+    public TrayApplicationContext(bool autoStarted = false)
     {
+        _autoStarted = autoStarted;
         _config = Config.Load();
         _manager = new DshManager(_config);
         _updateChecker = new UpdateChecker(_manager);
@@ -293,7 +296,15 @@ internal sealed class TrayApplicationContext : ApplicationContext
     {
         try
         {
-            var pid = _manager.FindDshPid();
+            // 开机自启时延迟启动：避开登录高峰期（此时 explorer/任务栏正在初始化，
+            // 立即拉起重量级的 dsh 会拖慢整机；延迟期间托盘图标已就绪）。
+            if (_autoStarted)
+            {
+                Log.Info("检测到开机自启启动，延迟 20 秒后再检查/启动 dsh。");
+                await Task.Delay(TimeSpan.FromSeconds(20));
+            }
+
+            var pid = await _manager.FindDshPidAsync();
             if (pid != null)
             {
                 Log.Info($"dsh 已在运行（PID {pid}），进入托盘。");
@@ -302,7 +313,7 @@ internal sealed class TrayApplicationContext : ApplicationContext
 
             Log.Info("dsh 未运行，准备启动…");
             SetBusy(true, "正在启动 dsh…");
-            using var proc = _manager.StartDsh();
+            using var proc = await _manager.StartDshAsync();
 
             if (await _manager.WaitForPortAsync(90_000))
             {
@@ -339,13 +350,13 @@ internal sealed class TrayApplicationContext : ApplicationContext
             SetBusy(true, "正在重启 dsh…");
             Log.Info("开始重启 dsh。");
 
-            if (_manager.IsDshRunning())
+            if (await _manager.IsDshRunningAsync())
             {
-                _manager.StopDsh();
+                await _manager.StopDshAsync();
                 await _manager.WaitForPortFreeAsync(20_000);
             }
 
-            using var proc = _manager.StartDsh();
+            using var proc = await _manager.StartDshAsync();
             if (await _manager.WaitForPortAsync(90_000))
             {
                 Log.Info("dsh 重启成功。");
@@ -377,7 +388,7 @@ internal sealed class TrayApplicationContext : ApplicationContext
 
         try
         {
-            if (!_manager.IsDshRunning())
+            if (!await _manager.IsDshRunningAsync())
             {
                 Notify("dsh", "dsh 当前未运行。", ToolTipIcon.Info);
                 return;
@@ -385,7 +396,7 @@ internal sealed class TrayApplicationContext : ApplicationContext
 
             SetBusy(true, "正在关闭 dsh…");
             Log.Info("开始关闭 dsh。");
-            _manager.StopDsh();
+            await _manager.StopDshAsync();
             var released = await _manager.WaitForPortFreeAsync(20_000);
             Log.Info(released ? "dsh 已关闭。" : "dsh 进程已终止，但端口未完全释放。");
             Notify("dsh 已关闭", released ? "服务已停止。" : "服务已停止，端口仍在释放中。", ToolTipIcon.Info);
@@ -419,7 +430,7 @@ internal sealed class TrayApplicationContext : ApplicationContext
     /// 「dsh 设置」：编辑监听 host/port，保存后生成 dsh-overlay.yml；
     /// 若 dsh 正在运行则询问是否立即重启使其生效。
     /// </summary>
-    private void OpenSettings()
+    private async void OpenSettings()
     {
         var form = new DshSettingsForm(_config);
         if (form.ShowDialog() != DialogResult.OK
@@ -449,7 +460,18 @@ internal sealed class TrayApplicationContext : ApplicationContext
             return;
         }
 
-        if (!_manager.IsDshRunning())
+        bool running;
+        try
+        {
+            running = await _manager.IsDshRunningAsync();
+        }
+        catch (Exception ex)
+        {
+            Log.Error("OpenSettings", ex);
+            return;
+        }
+
+        if (!running)
         {
             Notify("dsh 设置已保存", $"新配置将在下次启动 dsh 时生效（界面：{_config.BrowserUrl}）。", ToolTipIcon.Info);
             return;
@@ -496,13 +518,20 @@ internal sealed class TrayApplicationContext : ApplicationContext
         }
     }
 
-    private void RefreshStatus()
+    private async void RefreshStatus()
     {
-        var pid = _manager.FindDshPid();
-        _statusItem.Text = pid != null
-            ? $"dsh：运行中（PID {pid}）"
-            : "dsh：未运行（右键可启动）";
-        _statusItem.ToolTipText = $"界面地址：{_config.BrowserUrl}";
+        try
+        {
+            var pid = await _manager.FindDshPidAsync();
+            _statusItem.Text = pid != null
+                ? $"dsh：运行中（PID {pid}）"
+                : "dsh：未运行（右键可启动）";
+            _statusItem.ToolTipText = $"界面地址：{_config.BrowserUrl}";
+        }
+        catch (Exception ex)
+        {
+            Log.Error("RefreshStatus", ex);
+        }
     }
 
     private void Notify(string title, string message, ToolTipIcon icon)

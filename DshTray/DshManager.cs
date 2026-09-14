@@ -24,6 +24,7 @@ internal sealed class DshManager
     /// 通过端口识别 dsh 进程 PID。两级探测：
     /// 1) GetExtendedTcpTable（AF_INET+AF_INET6，LISTEN/ESTABLISHED 等占用行，忽略 TIME_WAIT 的 pid=0）；
     /// 2) netstat -ano 解析兜底（部分受限环境下 iphlpapi 表不返回 LISTEN 行）。
+    /// 注意：本方法含子进程等待，**只能在后台线程调用**（UI 线程阻塞会让任务栏/开始菜单无响应）。
     /// </summary>
     public int? FindDshPid()
     {
@@ -37,7 +38,13 @@ internal sealed class DshManager
         return FindDshPidViaNetstat();
     }
 
+    /// <summary>后台线程执行端口探测（UI 线程安全入口）。</summary>
+    public Task<int?> FindDshPidAsync() => Task.Run(FindDshPid);
+
     public bool IsDshRunning() => FindDshPid() != null;
+
+    /// <summary>后台线程执行运行状态检查（UI 线程安全入口）。</summary>
+    public async Task<bool> IsDshRunningAsync() => await FindDshPidAsync() != null;
 
     // ---------- 启动 / 停止 / 等待 ----------
 
@@ -59,6 +66,9 @@ internal sealed class DshManager
         return Process.Start(psi)!;
     }
 
+    /// <summary>后台线程启动 dsh（UI 线程安全入口）。</summary>
+    public Task<Process> StartDshAsync() => Task.Run(StartDsh);
+
     public void StopDsh()
     {
         var pid = FindDshPid();
@@ -77,12 +87,15 @@ internal sealed class DshManager
         proc.Kill(entireProcessTree: true);
     }
 
+    /// <summary>后台线程停止 dsh（UI 线程安全入口）。</summary>
+    public Task StopDshAsync() => Task.Run(StopDsh);
+
     public async Task<bool> WaitForPortAsync(int timeoutMs)
     {
         var sw = Stopwatch.StartNew();
         while (sw.ElapsedMilliseconds < timeoutMs)
         {
-            if (FindDshPid() != null && await TryHttpProbeAsync(800))
+            if (await FindDshPidAsync() != null && await TryHttpProbeAsync(800))
             {
                 return true;
             }
@@ -96,7 +109,7 @@ internal sealed class DshManager
         var sw = Stopwatch.StartNew();
         while (sw.ElapsedMilliseconds < timeoutMs)
         {
-            if (FindDshPid() == null)
+            if (await FindDshPidAsync() == null)
             {
                 return true;
             }
@@ -353,7 +366,7 @@ internal sealed class DshManager
             })
             {
                 proc.Start();
-                if (!proc.WaitForExit(8000))
+                if (!proc.WaitForExit(2000))
                 {
                     try { proc.Kill(); } catch { }
                 }

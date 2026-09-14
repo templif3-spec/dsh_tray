@@ -29,7 +29,8 @@ internal static class StartupManager
         var exe = Environment.ProcessPath
             ?? throw new InvalidOperationException("无法确定程序自身路径。");
         using var key = Registry.CurrentUser.CreateSubKey(RunKeyPath);
-        key.SetValue(ValueName, $"\"{exe}\"");
+        // 附带 --autostart：程序据此识别开机自启场景并延迟启动 dsh（避开登录高峰）
+        key.SetValue(ValueName, $"\"{exe}\" --autostart");
     }
 
     public static void Unregister()
