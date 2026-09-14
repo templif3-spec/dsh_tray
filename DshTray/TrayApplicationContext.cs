@@ -14,6 +14,8 @@ internal sealed class TrayApplicationContext : ApplicationContext
     private readonly UpdateChecker _updateChecker;
     private readonly NotifyIcon _notifyIcon;
     private readonly ToolStripMenuItem _statusItem;
+    /// <summary>运行中显示「关闭 dsh」、未运行显示「启动 dsh」（点击时按实时状态分派）。</summary>
+    private readonly ToolStripMenuItem _toggleItem;
     private readonly System.Windows.Forms.Timer _refreshTimer;
 
     // loading 图标动画状态
@@ -43,8 +45,8 @@ internal sealed class TrayApplicationContext : ApplicationContext
         var restartItem = new ToolStripMenuItem("重启 dsh");
         restartItem.Click += async (_, _) => await RestartDshAsync();
 
-        var stopItem = new ToolStripMenuItem("关闭 dsh");
-        stopItem.Click += async (_, _) => await StopDshAsync();
+        _toggleItem = new ToolStripMenuItem("关闭 dsh");
+        _toggleItem.Click += async (_, _) => await ToggleDshAsync();
 
         var settingsItem = new ToolStripMenuItem("dsh 设置…");
         settingsItem.Click += (_, _) => OpenSettings();
@@ -63,7 +65,7 @@ internal sealed class TrayApplicationContext : ApplicationContext
             new ToolStripSeparator(),
             openItem,
             restartItem,
-            stopItem,
+            _toggleItem,
             settingsItem,
             updateItem,
             new ToolStripSeparator(),
@@ -379,6 +381,72 @@ internal sealed class TrayApplicationContext : ApplicationContext
         }
     }
 
+    /// <summary>「关闭 dsh」/「启动 dsh」：按实时状态分派停止或启动。</summary>
+    private async Task ToggleDshAsync()
+    {
+        if (_busy)
+        {
+            return;
+        }
+
+        bool running;
+        try
+        {
+            running = await _manager.IsDshRunningAsync();
+        }
+        catch (Exception ex)
+        {
+            Log.Error("ToggleDsh", ex);
+            return;
+        }
+
+        if (running)
+        {
+            await StopDshAsync();
+        }
+        else
+        {
+            await StartDshAsync();
+        }
+    }
+
+    /// <summary>用户主动启动 dsh（菜单「启动 dsh」）。</summary>
+    private async Task StartDshAsync()
+    {
+        if (_busy)
+        {
+            return;
+        }
+
+        try
+        {
+            SetBusy(true, "正在启动 dsh…");
+            Log.Info("启动 dsh（用户请求）。");
+            using var proc = await _manager.StartDshAsync();
+
+            if (await _manager.WaitForPortAsync(90_000))
+            {
+                Log.Info("dsh 启动成功。");
+                Notify("dsh 已启动", $"界面：{_config.BrowserUrl}", ToolTipIcon.Info);
+            }
+            else
+            {
+                Log.Error("StartDsh", new TimeoutException("dsh 未在 90 秒内就绪。"));
+                Notify("dsh 启动超时", "服务未在预期时间内就绪，请查看 dsh-tray.log。", ToolTipIcon.Warning);
+            }
+        }
+        catch (Exception ex)
+        {
+            Log.Error("StartDsh", ex);
+            Notify("dsh 启动失败", ex.Message, ToolTipIcon.Error);
+        }
+        finally
+        {
+            SetBusy(false, null);
+            RefreshStatus();
+        }
+    }
+
     private async Task StopDshAsync()
     {
         if (_busy)
@@ -527,6 +595,8 @@ internal sealed class TrayApplicationContext : ApplicationContext
                 ? $"dsh：运行中（PID {pid}）"
                 : "dsh：未运行（右键可启动）";
             _statusItem.ToolTipText = $"界面地址：{_config.BrowserUrl}";
+            // 运行中 → 关闭 dsh；未运行 → 启动 dsh
+            _toggleItem.Text = pid != null ? "关闭 dsh" : "启动 dsh";
         }
         catch (Exception ex)
         {
