@@ -148,7 +148,7 @@ internal sealed class DshManager
     {
         var node = ResolveNodeExe();
         var entry = ResolveDshEntry();
-        return new ProcessStartInfo
+        var psi = new ProcessStartInfo
         {
             FileName = node,
             Arguments = $"\"{entry}\" {ResolveLaunchArgs()}",
@@ -156,6 +156,27 @@ internal sealed class DshManager
             UseShellExecute = false,
             CreateNoWindow = true,
         };
+
+        // 让 Node（24+）的 fetch/undici 遵循 HTTP_PROXY / HTTPS_PROXY / NO_PROXY 环境变量。
+        // 代理地址本身可写在 config.json 的 env 中（如 HTTPS_PROXY），或由系统环境变量继承。
+        psi.Environment["NODE_USE_ENV_PROXY"] = "1";
+        if (Config.Env != null)
+        {
+            foreach (var pair in Config.Env)
+            {
+                if (!string.IsNullOrWhiteSpace(pair.Key))
+                {
+                    psi.Environment[pair.Key] = pair.Value ?? "";
+                }
+            }
+        }
+
+        var proxyNote = new[] { "HTTPS_PROXY", "HTTP_PROXY", "ALL_PROXY" }
+            .Select(k => Environment.GetEnvironmentVariable(k))
+            .FirstOrDefault(v => !string.IsNullOrWhiteSpace(v));
+        Log.Info($"启动环境：NODE_USE_ENV_PROXY=1，代理={(proxyNote ?? "（未设置，直连）")}");
+
+        return psi;
     }
 
     /// <summary>

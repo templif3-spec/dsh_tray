@@ -15,6 +15,8 @@ namespace DshTray;
 ///   dshArgs  启动参数（默认 "web"；显式设置 Host/Port 时改用 --patch 覆盖层）
 ///   autoStart 是否写入开机启动项（true=注册；false=注销；未设置不干预）
 ///   autoUpdate 是否在启动时自动检查并更新 dsh（true=自动检查+更新；未设置=false）
+///   env      启动 dsh 时附加/覆盖的环境变量（如 { "HTTPS_PROXY": "http://127.0.0.1:7890" }）；
+///            程序固定注入 NODE_USE_ENV_PROXY=1（令 Node 24+ 的 fetch 遵循代理变量）
 /// </summary>
 internal sealed class Config
 {
@@ -26,6 +28,7 @@ internal sealed class Config
     public string DshArgs { get; set; } = "web";
     public bool? AutoStart { get; set; }
     public bool? AutoUpdate { get; set; }
+    public Dictionary<string, string>? Env { get; set; }
 
     /// <summary>生效端口：Port 字段优先，回退 url 中的端口。</summary>
     public int EffectivePort
