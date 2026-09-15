@@ -60,7 +60,7 @@ internal sealed class TrayApplicationContext : ApplicationContext
             // 打开瞬间用最近一次检测结果刷新文本（把滞后从 15s 缩短到打开前最后一次探测），
             // 随后后台复查一次，保证下次打开更准确。
             ApplyStatusToMenu();
-            _ = RefreshStatus();
+            RefreshStatus(); // async void：后台复查（无需 await）
         };
         menu.Closed += (_, _) =>
         {
