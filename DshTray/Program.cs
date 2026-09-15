@@ -21,6 +21,23 @@ internal static class Program
             return;
         }
 
+        // 退出/崩溃取证：任何退出路径都留痕（日志同步落盘）
+        AppDomain.CurrentDomain.ProcessExit += (_, _) =>
+        {
+            Log.Info("进程退出（ProcessExit）。");
+            Log.Flush();
+        };
+        AppDomain.CurrentDomain.UnhandledException += (_, e) =>
+        {
+            Log.Error("UnhandledException",
+                e.ExceptionObject as Exception ?? new Exception(e.ExceptionObject?.ToString() ?? "未知异常"));
+            Log.Flush();
+        };
+        Application.ThreadException += (_, e) => Log.Error("ThreadException", e.Exception);
+        Application.SetUnhandledExceptionMode(UnhandledExceptionMode.CatchException);
+
+        Log.Info($"进程启动（PID {Environment.ProcessId}，参数：{string.Join(' ', Environment.GetCommandLineArgs().Skip(1))}）");
+
         // 开机自启场景（注册表 Run 传入 --autostart）：延迟启动 dsh，避开登录高峰
         var autoStarted = Environment.GetCommandLineArgs()
             .Any(a => a.Equals("--autostart", StringComparison.OrdinalIgnoreCase));

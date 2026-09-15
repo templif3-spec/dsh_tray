@@ -28,6 +28,24 @@ internal static class Log
     public static void Error(string context, Exception ex) =>
         Enqueue("ERROR", $"{context}: {ex.GetType().Name}: {ex.Message}");
 
+    /// <summary>等待队列落盘（进程退出前调用，避免丢失尾部日志）。</summary>
+    public static void Flush(int timeoutMs = 3000)
+    {
+        try
+        {
+            Queue.CompleteAdding();
+            var sw = System.Diagnostics.Stopwatch.StartNew();
+            while (Queue.Count > 0 && sw.ElapsedMilliseconds < timeoutMs)
+            {
+                Thread.Sleep(20);
+            }
+        }
+        catch
+        {
+            // 忽略
+        }
+    }
+
     private static void Enqueue(string level, string message)
     {
         try
