@@ -77,13 +77,28 @@ internal sealed class DshManager
             return;
         }
 
+        // 自我保护 1：绝不终止托盘程序自身（端口探测异常时兜底）
+        if (pid.Value == Environment.ProcessId)
+        {
+            throw new InvalidOperationException(
+                $"检测到端口 {Config.EffectivePort} 的占用者竟是本程序自身（PID {pid}），已取消停止操作。");
+        }
+
         using var proc = Process.GetProcessById(pid.Value);
+
+        // 自我保护 2：绝不终止托盘程序进程（按进程名排除，与本程序同名的一律跳过）
+        if (proc.ProcessName.Equals("DshTray", StringComparison.OrdinalIgnoreCase))
+        {
+            throw new InvalidOperationException(
+                "检测到的进程是本托盘程序，已取消停止操作（本操作只应终止 dsh 服务进程）。");
+        }
+
         if (!IsLikelyDshProcess(proc))
         {
             throw new InvalidOperationException(
                 $"端口 {Config.EffectivePort} 被进程 {proc.ProcessName}（PID {pid}）占用，不像 dsh 服务，已取消停止操作。");
         }
-        Log.Info($"终止 dsh 进程树（PID {pid}）");
+        Log.Info($"终止 dsh 进程树（PID {pid}，进程名 {proc.ProcessName}）");
         proc.Kill(entireProcessTree: true);
     }
 

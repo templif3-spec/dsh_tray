@@ -590,11 +590,13 @@ internal sealed class TrayApplicationContext : ApplicationContext
             }
 
             SetBusy(true, "正在关闭 dsh…");
-            Log.Info("开始关闭 dsh。");
+            Log.Info("开始关闭 dsh（仅终止 dsh 服务，托盘程序继续驻留）。");
             await _manager.StopDshAsync();
             var released = await _manager.WaitForPortFreeAsync(20_000);
-            Log.Info(released ? "dsh 已关闭。" : "dsh 进程已终止，但端口未完全释放。");
-            Notify("dsh 已关闭", released ? "服务已停止。" : "服务已停止，端口仍在释放中。", ToolTipIcon.Info);
+            Log.Info(released ? "dsh 已关闭（托盘继续驻留）。" : "dsh 进程已终止，但端口未完全释放。");
+            Notify("dsh 已关闭", released
+                ? "后台服务已停止，托盘程序继续驻留（可随时重新启动 dsh）。"
+                : "后台服务已停止（端口仍在释放中），托盘程序继续驻留。", ToolTipIcon.Info);
         }
         catch (Exception ex)
         {
