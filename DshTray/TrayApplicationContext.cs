@@ -30,6 +30,8 @@ internal sealed class TrayApplicationContext : ApplicationContext
     private int _refreshTicks;
     /// <summary>右键菜单是否处于打开状态（打开期间禁止改菜单项文本）。</summary>
     private bool _menuOpen;
+    /// <summary>最近一次检测到的 dsh PID（null=未运行）；用于菜单打开瞬间刷新文本。</summary>
+    private int? _dshPid;
 
     // loading 图标动画状态
     private static readonly int LoadingFrameCount = 8;
@@ -52,7 +54,14 @@ internal sealed class TrayApplicationContext : ApplicationContext
 
         // 菜单打开期间禁止修改菜单项文本（避免 ToolStrip 内部状态错乱导致捕获残留）；
         // 关闭时统一刷新状态并强制释放鼠标捕获（幽灵捕获兜底）。
-        menu.Opening += (_, _) => _menuOpen = true;
+        menu.Opening += (_, _) =>
+        {
+            _menuOpen = true;
+            // 打开瞬间用最近一次检测结果刷新文本（把滞后从 15s 缩短到打开前最后一次探测），
+            // 随后后台复查一次，保证下次打开更准确。
+            ApplyStatusToMenu();
+            _ = RefreshStatus();
+        };
         menu.Closed += (_, _) =>
         {
             _menuOpen = false;
@@ -76,7 +85,12 @@ internal sealed class TrayApplicationContext : ApplicationContext
         restartItem.Click += (_, _) => RunAfterMenuCloses(() => _ = RestartDshAsync());
 
         _toggleItem = new ToolStripMenuItem("关闭 dsh");
-        _toggleItem.Click += (_, _) => RunAfterMenuCloses(() => _ = ToggleDshAsync());
+        _toggleItem.Click += (_, _) =>
+        {
+            // 按用户看到的文本确定意图（"关闭 dsh" / "启动 dsh"）
+            var intendStop = _toggleItem.Text.StartsWith("关闭", StringComparison.Ordinal);
+            RunAfterMenuCloses(() => _ = ToggleDshAsync(intendStop));
+        };
 
         var settingsItem = new ToolStripMenuItem("dsh 设置…");
         settingsItem.Click += (_, _) => RunAfterMenuCloses(OpenSettings);
@@ -493,32 +507,25 @@ internal sealed class TrayApplicationContext : ApplicationContext
         }
     }
 
-    /// <summary>「关闭 dsh」/「启动 dsh」：按实时状态分派停止或启动。</summary>
-    private async Task ToggleDshAsync()
+    /// <summary>
+    /// 「关闭 dsh」/「启动 dsh」：**按用户看到的菜单文本执行**（intendStop=true 表示点的是「关闭 dsh」）。
+    /// 不能用点击时的实时状态反推意图：菜单文本刷新有延迟，实时反推会出现
+    /// "点关闭却去启动"的错位。状态与意图不符时给出准确提示。
+    /// </summary>
+    private async Task ToggleDshAsync(bool intendStop)
     {
         if (_busy)
         {
             return;
         }
 
-        bool running;
-        try
+        if (intendStop)
         {
-            running = await _manager.IsDshRunningAsync();
-        }
-        catch (Exception ex)
-        {
-            Log.Error("ToggleDsh", ex);
-            return;
-        }
-
-        if (running)
-        {
-            await StopDshAsync();
+            await StopDshAsync(); // 内部会处理"当前未运行"的提示
         }
         else
         {
-            await StartDshAsync();
+            await StartDshAsync(); // 内部会处理"已在运行"的提示
         }
     }
 
@@ -532,6 +539,14 @@ internal sealed class TrayApplicationContext : ApplicationContext
 
         try
         {
+            var existing = await _manager.FindDshPidAsync();
+            if (existing != null)
+            {
+                Notify("dsh", $"dsh 已在运行（PID {existing}）。", ToolTipIcon.Info);
+                RefreshStatus();
+                return;
+            }
+
             SetBusy(true, "正在启动 dsh…");
             Log.Info("启动 dsh（用户请求）。");
             using var proc = await _manager.StartDshAsync();
@@ -709,21 +724,28 @@ internal sealed class TrayApplicationContext : ApplicationContext
         try
         {
             var pid = await _manager.FindDshPidAsync();
+            _dshPid = pid;
             // 菜单打开期间不改动菜单项（ToolStrip 显示中修改文本可能导致状态错乱/捕获残留）
             if (!_menuOpen)
             {
-                _statusItem.Text = pid != null
-                    ? $"dsh：运行中（PID {pid}）"
-                    : "dsh：未运行（右键可启动）";
-                _statusItem.ToolTipText = $"界面地址：{_config.BrowserUrl}";
-                // 运行中 → 关闭 dsh；未运行 → 启动 dsh
-                _toggleItem.Text = pid != null ? "关闭 dsh" : "启动 dsh";
+                ApplyStatusToMenu();
             }
         }
         catch (Exception ex)
         {
             Log.Error("RefreshStatus", ex);
         }
+    }
+
+    /// <summary>按缓存的运行状态刷新菜单文案（仅在菜单未打开时调用，或菜单打开瞬间调用）。</summary>
+    private void ApplyStatusToMenu()
+    {
+        _statusItem.Text = _dshPid != null
+            ? $"dsh：运行中（PID {_dshPid}）"
+            : "dsh：未运行（右键可启动）";
+        _statusItem.ToolTipText = $"界面地址：{_config.BrowserUrl}";
+        // 运行中 → 关闭 dsh；未运行 → 启动 dsh
+        _toggleItem.Text = _dshPid != null ? "关闭 dsh" : "启动 dsh";
     }
 
     private void Notify(string title, string message, ToolTipIcon icon)
